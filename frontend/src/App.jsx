@@ -14,7 +14,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { fetchDevices, connectWebSocket } from './api.js';
-import DeviceCard from './components/DeviceCard.jsx';
+import DeviceRow from './components/DeviceRow.jsx';
 import DeviceDetail from './components/DeviceDetail.jsx';
 
 export default function App() {
@@ -77,21 +77,37 @@ export default function App() {
         </div>
       </header>
 
-      <main className="grid">
-        {deviceList.length === 0 && (
-          // Empty state doubles as a hint about what should be happening.
+      <main className="table-wrap">
+        {deviceList.length === 0 ? (
           <div className="empty">
             Waiting for devices to report in. If this stays empty, check that the
             simulator container is running.
           </div>
+        ) : (
+          <table className="device-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Device</th>
+                <th>Location</th>
+                <th>Type</th>
+                <th>Temp</th>
+                <th>Humidity</th>
+                <th>LED</th>
+                <th>Switch</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deviceList.map((device) => (
+                <DeviceRow
+                  key={device.id}
+                  device={device}
+                  onOpen={() => setSelectedId(device.id)}
+                />
+              ))}
+            </tbody>
+          </table>
         )}
-        {deviceList.map((device) => (
-          <DeviceCard
-            key={device.id}
-            device={device}
-            onOpen={() => setSelectedId(device.id)}
-          />
-        ))}
       </main>
 
       {selected && (

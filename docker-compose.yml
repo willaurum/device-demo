@@ -89,7 +89,7 @@ services:
     build: ./simulator
     environment:
       MQTT_URL: mqtt://broker:1883
-      DEVICE_COUNT: "1000"          # try bumping this to 100 or 1000 later
+      DEVICE_COUNT: "10"          # try bumping this to 100 or 1000 later
     depends_on:
       - broker
 
