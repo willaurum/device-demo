@@ -1,0 +1,12 @@
+{
+  "name": "device-demo-simulator",
+  "version": "1.0.0",
+  "description": "Mock IoT device fleet that publishes over MQTT",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "mqtt": "^5.7.0"
+  }
+}

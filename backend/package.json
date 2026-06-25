@@ -1,0 +1,15 @@
+{
+  "name": "device-demo-backend",
+  "version": "1.0.0",
+  "description": "Device management backend: MQTT + Postgres + REST + WebSocket",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "mqtt": "^5.7.0",
+    "pg": "^8.12.0",
+    "ws": "^8.18.0"
+  }
+}

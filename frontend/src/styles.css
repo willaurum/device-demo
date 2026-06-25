@@ -1,0 +1,201 @@
+/* ============================================================================
+   styles.css  --  "operations console" theme
+   ----------------------------------------------------------------------------
+   Direction: a calm, technical fleet monitor you could leave on a wall display.
+   Dark slate surfaces, a monospace face for data (ids and readings), a single
+   teal-green accent for "live / online", and amber reserved for an energized
+   LED. Restraint everywhere except one signature: the pulsing live dot.
+   ============================================================================ */
+
+:root {
+  --bg:        #0e1116;
+  --surface:   #161b22;
+  --surface-2: #1c232c;
+  --border:    #283039;
+  --text:      #e6edf3;
+  --text-dim:  #8b97a6;
+  --accent:    #3fd1a3;   /* live / online / chart line */
+  --amber:     #f2b134;   /* LED energized */
+  --radius:    12px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Top bar ------------------------------------------------------------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.brand { display: flex; align-items: center; gap: 14px; }
+.brand-mark {
+  width: 12px; height: 28px; border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 14px rgba(63, 209, 163, 0.5);
+}
+.topbar h1 { font-size: 17px; margin: 0; letter-spacing: 0.2px; }
+.brand-sub { margin: 2px 0 0; font-size: 12px; color: var(--text-dim); }
+
+.fleet-stats { display: flex; align-items: center; gap: 26px; }
+.stat { display: flex; flex-direction: column; align-items: flex-end; }
+.stat-value { font-family: var(--mono); font-size: 20px; line-height: 1; }
+.stat-value.accent { color: var(--accent); }
+.stat-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 3px; }
+
+.link-pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--text-dim);
+  padding: 6px 11px; border: 1px solid var(--border); border-radius: 999px;
+}
+.link-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); }
+.link-pill.on { color: var(--accent); border-color: rgba(63, 209, 163, 0.3); }
+.link-pill.on .dot { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+
+/* The signature: a soft pulsing ring on anything live. */
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(63, 209, 163, 0.5); }
+  50%      { box-shadow: 0 0 0 5px rgba(63, 209, 163, 0); }
+}
+
+/* ---- Grid of devices ----------------------------------------------------- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  padding: 24px 28px;
+}
+.empty {
+  grid-column: 1 / -1;
+  color: var(--text-dim);
+  padding: 40px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+/* ---- Device card --------------------------------------------------------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 16px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.card:hover { border-color: #3a4552; transform: translateY(-2px); }
+.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.card.is-offline { opacity: 0.6; }
+
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.card-name { font-size: 15px; margin: 0; }
+.card-id { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+.card-loc { font-size: 13px; color: var(--text-dim); margin: 10px 0 14px; }
+
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.status .dot { width: 8px; height: 8px; border-radius: 50%; }
+.status.online { color: var(--accent); }
+.status.online .dot { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+.status.offline { color: var(--text-dim); }
+.status.offline .dot { background: var(--text-dim); }
+
+.readings {
+  display: flex; gap: 10px; margin-bottom: 14px;
+}
+.reading {
+  flex: 1;
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.reading-value { display: block; font-family: var(--mono); font-size: 19px; }
+.reading-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+
+.channels { display: flex; gap: 10px; }
+.channel { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.channel-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* LED button (the output we control) */
+.led-btn {
+  font-family: var(--mono); font-size: 13px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  transition: all 0.15s;
+}
+.led-btn.on {
+  background: rgba(242, 177, 52, 0.16);
+  border-color: var(--amber); color: var(--amber);
+}
+.led-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* read-only on/off pill (switch input, and detail channels) */
+.pill {
+  display: inline-block; text-align: center;
+  font-family: var(--mono); font-size: 13px;
+  padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-dim);
+}
+.pill.on { color: var(--accent); border-color: rgba(63, 209, 163, 0.35); }
+
+/* ---- Detail slide-over --------------------------------------------------- */
+.backdrop {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5);
+  display: flex; justify-content: flex-end; z-index: 20;
+}
+.detail {
+  width: 420px; max-width: 92vw; height: 100%;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: 22px 24px; overflow-y: auto;
+}
+.detail-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+.detail-head h2 { margin: 0 0 2px; font-size: 18px; }
+.close {
+  background: none; border: none; color: var(--text-dim);
+  font-size: 26px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.close:hover { color: var(--text); }
+
+.meta { margin: 0 0 8px; }
+.meta-row { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.meta-row dt { color: var(--text-dim); font-size: 13px; margin: 0; }
+.meta-row dd { margin: 0; font-size: 13px; font-family: var(--mono); }
+
+.panel { margin-top: 22px; }
+.panel h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-dim); margin: 0 0 12px; font-weight: 600; }
+.chart-wrap { color: var(--accent); }   /* the chart uses currentColor */
+.chart { display: block; height: 120px; }
+.chart-tick { fill: var(--text-dim); font-size: 11px; font-family: var(--mono); }
+.chart-empty { color: var(--text-dim); font-size: 13px; padding: 30px 0; }
+
+.detail-channels { display: flex; gap: 12px; }
+.dc { flex: 1; display: flex; flex-direction: column; gap: 7px; }
+
+.firmware .muted { color: var(--text-dim); font-size: 13px; line-height: 1.6; margin: 0 0 12px; }
+.ghost {
+  font-size: 13px; padding: 8px 14px; border-radius: 8px;
+  background: none; border: 1px solid var(--border); color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+/* ---- Small screens ------------------------------------------------------- */
+@media (max-width: 600px) {
+  .topbar { padding: 14px 16px; }
+  .fleet-stats { gap: 16px; }
+  .grid { padding: 16px; }
+}

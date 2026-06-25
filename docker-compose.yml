@@ -1,0 +1,107 @@
+# =============================================================================
+# docker-compose.yml
+# -----------------------------------------------------------------------------
+# This single file describes the WHOLE system: four containers wired together
+# on one private network. `docker compose up` starts all of them.
+#
+# WHY THIS MATTERS FOR THE PROJECT:
+#   This exact file is the "portability proof." It runs unchanged on your
+#   laptop, on an AWS EC2 VM, or on an Azure VM. None of these services is an
+#   AWS product -- they are plain open-source software in containers. Moving
+#   clouds later means "copy this file to a different Linux box," not "rewrite
+#   the app." That is the hexagonal / vendor-neutral idea made concrete.
+#
+# THE FOUR SERVICES:
+#   broker     - Mosquitto, the MQTT message broker (the post office)
+#   postgres   - the device registry + telemetry history (the filing cabinet)
+#   backend    - Node app: talks MQTT + Postgres, serves a REST API + WebSocket
+#   frontend   - the React dashboard (Vite dev server)
+#   simulator  - fake devices that publish data, so you need no hardware
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # MQTT BROKER (Eclipse Mosquitto)
+  # Every device and the backend connect here. Devices PUBLISH messages to
+  # "topics" and SUBSCRIBE to topics they care about; the broker routes them.
+  # Deliberately NOT AWS IoT Core -- this is the swappable, portable choice.
+  # ---------------------------------------------------------------------------
+  broker:
+    image: eclipse-mosquitto:2
+    # Mounting our own config file turns on the network listener (see the .conf).
+    volumes:
+      - ./mosquitto/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    ports:
+      # We expose 1883 to YOUR laptop only for convenience (e.g. to poke it with
+      # a CLI tool). In the AWS deploy you would NOT open 1883 to the internet:
+      # the simulator runs on the same box, so the broker can stay internal.
+      - "1883:1883"
+
+  # ---------------------------------------------------------------------------
+  # POSTGRES (the device registry + telemetry store)
+  # A standard relational DB. Chosen over a cloud-specific store (DynamoDB,
+  # etc.) precisely so the data layer stays portable.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: devices
+      POSTGRES_PASSWORD: devices
+      POSTGRES_DB: devices
+    # Files in this special folder are run ONCE, the first time the DB is
+    # created. That is how our tables get set up automatically (see init.sql).
+    volumes:
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"   # exposed so you can connect with a DB GUI if you want
+
+  # ---------------------------------------------------------------------------
+  # BACKEND (Node: Express REST API + WebSocket + MQTT client)
+  # This is the brain. It listens to device messages over MQTT, writes them to
+  # Postgres, pushes live updates to the dashboard over a WebSocket, and lets
+  # the dashboard send commands back down to devices.
+  # ---------------------------------------------------------------------------
+  backend:
+    build: ./backend
+    environment:
+      # The backend finds the other services by their compose SERVICE NAME.
+      # Inside this network, "broker" and "postgres" resolve to the right
+      # containers automatically -- no IP addresses needed.
+      MQTT_URL: mqtt://broker:1883
+      DATABASE_URL: postgres://devices:devices@postgres:5432/devices
+      PORT: "5000"
+    ports:
+      - "5000:5000"
+    depends_on:
+      - broker
+      - postgres
+    # depends_on only controls START ORDER, not readiness. The backend code
+    # therefore retries its first DB connection (see src/db.js).
+
+  # ---------------------------------------------------------------------------
+  # SIMULATOR (fake devices)
+  # Spins up DEVICE_COUNT pretend devices. Each one connects to the broker and
+  # behaves like a real embedded node: announces itself, streams telemetry,
+  # reports its switch, and obeys LED commands. Swap this out for real hardware
+  # later and nothing else in the system has to change.
+  # ---------------------------------------------------------------------------
+  simulator:
+    build: ./simulator
+    environment:
+      MQTT_URL: mqtt://broker:1883
+      DEVICE_COUNT: "1000"          # try bumping this to 100 or 1000 later
+    depends_on:
+      - broker
+
+  # ---------------------------------------------------------------------------
+  # FRONTEND (React dashboard via Vite dev server)
+  # Vite serves the React app with hot-reload and PROXIES /api and /ws to the
+  # backend (see vite.config.js). That means the browser only ever talks to one
+  # origin, so there are no CORS headaches.
+  # ---------------------------------------------------------------------------
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
