@@ -252,6 +252,76 @@ body {
   cursor: not-allowed;
 }
 
+/* ---- Generic control button (a writable control: LED, valve, ...) -------- */
+/* Replaces the old single-purpose .led-btn. Read-only controls reuse .pill. */
+.ctrl-btn {
+  font-family: var(--mono); font-size: 13px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  transition: all 0.15s;
+}
+.ctrl-btn.on {
+  background: rgba(242, 177, 52, 0.16);
+  border-color: var(--amber); color: var(--amber);
+}
+.ctrl-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* a dimmed dash for "this device type doesn't have this column" */
+.muted { color: var(--text-dim); }
+
+/* metric picker in the detail panel */
+.metric-select {
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 8px; margin-bottom: 12px;
+  font-size: 12px; font-family: var(--mono);
+}
+
+/* ---- Tenant name + sign-out in the top bar (FEATURE 2) ------------------- */
+.logout-btn {
+  background: none; border: 1px solid var(--border); border-radius: 999px;
+  color: var(--text-dim); cursor: pointer; font-size: 12px;
+  padding: 6px 12px; transition: color 0.15s, border-color 0.15s;
+}
+.logout-btn:hover { color: var(--text); border-color: var(--text-dim); }
+
+/* ---- Login screen (FEATURE 2) -------------------------------------------- */
+.login-screen {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.login-card {
+  width: 380px; max-width: 100%;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 28px;
+}
+.login-card h1 { font-size: 18px; margin: 0 0 6px; }
+.login-card > p { color: var(--text-dim); font-size: 13px; margin: 0 0 18px; line-height: 1.5; }
+.login-card input {
+  width: 100%; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); color: var(--text);
+  font-family: var(--mono); font-size: 13px;
+}
+.login-card button[type="submit"] {
+  width: 100%; margin-top: 12px; padding: 10px;
+  border: 1px solid var(--accent); border-radius: 8px;
+  background: rgba(63, 209, 163, 0.16); color: var(--accent);
+  font-size: 14px; cursor: pointer; transition: background 0.15s;
+}
+.login-card button[type="submit"]:hover { background: rgba(63, 209, 163, 0.26); }
+.login-error { color: #e5534b; font-size: 12px; margin-top: 10px; }
+.login-hint {
+  margin-top: 18px; padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--text-dim); line-height: 1.9;
+}
+.login-hint code {
+  font-family: var(--mono); color: var(--text);
+  cursor: pointer; border-bottom: 1px dotted var(--text-dim);
+}
+
 /* ---- Small screens ------------------------------------------------------- */
 @media (max-width: 600px) {
   .topbar { padding: 14px 16px; }

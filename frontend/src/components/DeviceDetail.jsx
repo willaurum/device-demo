@@ -1,47 +1,53 @@
 // ============================================================================
 // DeviceDetail.jsx  --  slide-over panel for one device
 // ----------------------------------------------------------------------------
-// Opens when you click a card. It:
-//   - fetches the recent temperature history once and draws a sparkline
-//   - appends live telemetry points as they stream in (via the livePoint prop)
-//   - shows config + a firmware section
+// Opens when you click a row. Capability-driven like the rest (FEATURE 1):
+//   - it reads the device's capabilities to know which telemetry metrics and
+//     controls exist, instead of assuming temperature/LED/switch
+//   - it lets you pick which metric to chart (when there's more than one) and
+//     draws a live sparkline for it
+//   - it lists every control, and lets you toggle the writable ones right here
 //
-// On the firmware section: Chris deferred OTA updates for now, so it's shown
-// but intentionally not wired up -- a placeholder for the Mender/hawkBit
-// milestone from the architecture notes. It keeps the feature visible without
-// pretending it works.
+// On the firmware section: OTA updates are deferred, so it's shown but
+// intentionally not wired up -- a placeholder for the Mender/hawkBit milestone.
 // ============================================================================
 
 import React, { useEffect, useState } from 'react';
-import { fetchTelemetry } from '../api.js';
+import { fetchTelemetry, sendCommand } from '../api.js';
 import Sparkline from './Sparkline.jsx';
 
 export default function DeviceDetail({ device, livePoint, onClose }) {
+  const caps = device.capabilities || {};
+  const metrics = caps.telemetry || [];
+  const controls = caps.controls || [];
+
+  // Which metric is being charted. Default to the device's first metric (if it
+  // has any). This makes the panel work for a flow meter just as well as a
+  // temperature sensor.
+  const [metric, setMetric] = useState(metrics[0]?.metric || null);
+  const metricDef = metrics.find((m) => m.metric === metric);
+
   const [history, setHistory] = useState([]);
 
-  // Load temperature history whenever the selected device changes.
+  // Load the chosen metric's history whenever the device or metric changes.
   useEffect(() => {
+    if (!metric) return;
     let active = true;
-    fetchTelemetry(device.id, 'temperature', 60)
+    fetchTelemetry(device.id, metric, 60)
       .then((rows) => active && setHistory(rows))
       .catch((err) => console.error(err));
     return () => { active = false; };
-  }, [device.id]);
+  }, [device.id, metric]);
 
-  // Append a live point if it's for THIS device and the temperature metric.
+  // Append a live point if it's for THIS device and the metric we're charting.
   useEffect(() => {
-    if (!livePoint) return;
-    if (livePoint.id === device.id && livePoint.metric === 'temperature') {
-      setHistory((prev) => {
-        const next = [...prev, { value: livePoint.value, ts: livePoint.ts }];
-        return next.slice(-60);          // keep only the most recent 60 points
-      });
+    if (!livePoint || !metric) return;
+    if (livePoint.id === device.id && livePoint.metric === metric) {
+      setHistory((prev) => [...prev, { value: livePoint.value, ts: livePoint.ts }].slice(-60));
     }
-  }, [livePoint, device.id]);
+  }, [livePoint, device.id, metric]);
 
   return (
-    // The backdrop closes the panel when clicked; the panel itself stops the
-    // click from bubbling up to it.
     <div className="backdrop" onClick={onClose}>
       <aside className="detail" onClick={(e) => e.stopPropagation()}>
         <div className="detail-head">
@@ -59,30 +65,39 @@ export default function DeviceDetail({ device, livePoint, onClose }) {
           <Meta label="Status" value={device.online ? 'online' : 'offline'} />
         </dl>
 
-        <section className="panel">
-          <h3>Temperature</h3>
-          <div className="chart-wrap">
-            <Sparkline points={history} unit="°C" />
-          </div>
-        </section>
+        {/* Telemetry chart -- only if this device type reports any metrics. */}
+        {metrics.length > 0 && (
+          <section className="panel">
+            <h3>Telemetry</h3>
+            {/* metric picker appears only when there's more than one choice */}
+            {metrics.length > 1 && (
+              <select
+                className="metric-select"
+                value={metric}
+                onChange={(e) => setMetric(e.target.value)}
+              >
+                {metrics.map((m) => (
+                  <option key={m.metric} value={m.metric}>{m.label}</option>
+                ))}
+              </select>
+            )}
+            <div className="chart-wrap">
+              <Sparkline points={history} unit={metricDef?.unit || ''} />
+            </div>
+          </section>
+        )}
 
-        <section className="panel">
-          <h3>Channels</h3>
-          <div className="detail-channels">
-            <div className="dc">
-              <span className="channel-label">LED output</span>
-              <span className={`pill ${device.led_state ? 'on' : 'off'}`}>
-                {device.led_state ? 'on' : 'off'}
-              </span>
+        {/* Controls -- one entry per control; writable ones are toggleable. */}
+        {controls.length > 0 && (
+          <section className="panel">
+            <h3>Controls</h3>
+            <div className="detail-channels">
+              {controls.map((c) => (
+                <DetailControl key={c.key} device={device} control={c} />
+              ))}
             </div>
-            <div className="dc">
-              <span className="channel-label">switch input</span>
-              <span className={`pill ${device.switch_state ? 'on' : 'off'}`}>
-                {device.switch_state ? 'on' : 'off'}
-              </span>
-            </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         <section className="panel firmware">
           <h3>Firmware updates</h3>
@@ -97,11 +112,47 @@ export default function DeviceDetail({ device, livePoint, onClose }) {
   );
 }
 
+// A single control inside the detail panel. Mirrors the row: writable controls
+// get a toggle button, read-only ones a pill.
+function DetailControl({ device, control }) {
+  const [sending, setSending] = useState(false);
+  const value = device.state?.[control.key];
+  const label = control.label || control.key;
+
+  const toggle = async () => {
+    setSending(true);
+    try {
+      await sendCommand(device.id, control.key, !value);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setTimeout(() => setSending(false), 800);
+    }
+  };
+
+  return (
+    <div className="dc">
+      <span className="channel-label">{label}{control.writable ? ' (output)' : ' (input)'}</span>
+      {control.writable ? (
+        <button
+          className={`ctrl-btn ${value ? 'on' : 'off'}`}
+          onClick={toggle}
+          disabled={sending || !device.online}
+        >
+          {sending ? 'sending…' : value ? 'on' : 'off'}
+        </button>
+      ) : (
+        <span className={`pill ${value ? 'on' : 'off'}`}>{value ? 'on' : 'off'}</span>
+      )}
+    </div>
+  );
+}
+
 function Meta({ label, value }) {
   return (
     <div className="meta-row">
       <dt>{label}</dt>
-      <dd>{value || '\u2014'}</dd>
+      <dd>{value || '—'}</dd>
     </div>
   );
 }

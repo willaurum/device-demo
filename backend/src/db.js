@@ -1,10 +1,22 @@
 // ============================================================================
 // db.js  --  everything that touches Postgres
 // ----------------------------------------------------------------------------
-// We keep all SQL in this one file so the rest of the app never writes queries
+// All SQL lives in this one file so the rest of the app never writes queries
 // inline. If you ever swapped Postgres for something else, THIS is the only
-// file that would change -- the "adapter" idea from the architecture notes,
-// applied in miniature.
+// file that would change -- the "adapter" idea, applied in miniature.
+//
+// TWO THINGS TO NOTICE AS THE INTERN:
+//
+//  1. (multi-tenancy) Almost every function takes a `tenantId` as its first
+//     argument and every query filters on it. That filtering is the actual
+//     mechanism that keeps one client's data invisible to another. The HTTP
+//     layer decides the tenantId from the caller's API key (see auth.js); this
+//     layer just trusts and enforces it. There is no query here that returns
+//     devices across tenants.
+//
+//  2. (capabilities) Device state and telemetry are stored as generic JSON
+//     blobs ("state" and "latest"), not fixed columns. So we never name "led"
+//     or "temperature" in SQL -- any device type just works.
 // ============================================================================
 
 const { Pool } = require('pg');
@@ -16,7 +28,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 // ---- Startup readiness -----------------------------------------------------
 // docker-compose starts Postgres and the backend at roughly the same time, but
 // Postgres needs a few seconds to accept connections. So we retry the first
-// connection instead of crashing. This is a common, important pattern.
+// connection instead of crashing. A common, important pattern.
 async function waitForDb(retries = 15, delayMs = 2000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
@@ -31,110 +43,141 @@ async function waitForDb(retries = 15, delayMs = 2000) {
   throw new Error('[db] could not connect to Postgres after several retries');
 }
 
+// ---- Auth lookups (FEATURE 2) ----------------------------------------------
+// Resolve an API key to the tenant that owns it. Returns { id, name } or null.
+// auth.js calls this (and caches the result) to turn a request's key into a
+// tenant before any data query runs.
+async function getTenantByApiKey(apiKey) {
+  const { rows } = await pool.query(
+    `SELECT id, name FROM tenants WHERE api_key = $1`,
+    [apiKey]
+  );
+  return rows[0] || null;
+}
+
 // ---- Writes (driven by incoming MQTT messages) ----------------------------
-// Each uses INSERT ... ON CONFLICT ("upsert"): if the device row doesn't exist
-// yet we create it, otherwise we update it. That means messages can arrive in
-// any order -- a telemetry reading before the device's meta, say -- and we
-// never crash on a missing row.
+// Each uses INSERT ... ON CONFLICT ("upsert") on the composite (tenant_id, id)
+// key: if the device row doesn't exist yet we create it, otherwise we update
+// it. That means messages can arrive in any order and we never crash on a
+// missing row.
+
+// Make sure a device row exists before we attach data to it. Used by telemetry,
+// which has a foreign key to devices -- if a reading somehow arrives before the
+// device's meta/state, this stops the insert from failing.
+async function ensureDevice(tenantId, id) {
+  await pool.query(
+    `INSERT INTO devices (tenant_id, id, last_seen)
+     VALUES ($1, $2, now())
+     ON CONFLICT (tenant_id, id) DO NOTHING`,
+    [tenantId, id]
+  );
+}
 
 // Device announced who it is.
-async function upsertMeta(id, { name, location, type, firmware }) {
+async function upsertMeta(tenantId, id, { name, location, type, firmware }) {
   await pool.query(
-    `INSERT INTO devices (id, name, location, type, firmware, last_seen)
-     VALUES ($1, $2, $3, $4, $5, now())
-     ON CONFLICT (id) DO UPDATE
+    `INSERT INTO devices (tenant_id, id, name, location, type, firmware, last_seen)
+     VALUES ($1, $2, $3, $4, $5, $6, now())
+     ON CONFLICT (tenant_id, id) DO UPDATE
        SET name = EXCLUDED.name,
            location = EXCLUDED.location,
            type = EXCLUDED.type,
            firmware = EXCLUDED.firmware,
            last_seen = now()`,
-    [id, name, location, type, firmware]
+    [tenantId, id, name, location, type, firmware]
   );
 }
 
 // Device connected/disconnected (online flag).
-async function setOnline(id, online) {
+async function setOnline(tenantId, id, online) {
   await pool.query(
-    `INSERT INTO devices (id, online, last_seen)
-     VALUES ($1, $2, now())
-     ON CONFLICT (id) DO UPDATE
-       SET online = EXCLUDED.online, last_seen = now()`,
-    [id, online]
-  );
-}
-
-// Device reported its binary channels (LED output + switch input).
-async function setState(id, { led, sw }) {
-  await pool.query(
-    `INSERT INTO devices (id, led_state, switch_state, last_seen)
+    `INSERT INTO devices (tenant_id, id, online, last_seen)
      VALUES ($1, $2, $3, now())
-     ON CONFLICT (id) DO UPDATE
-       SET led_state = EXCLUDED.led_state,
-           switch_state = EXCLUDED.switch_state,
-           last_seen = now()`,
-    [id, led, sw]
+     ON CONFLICT (tenant_id, id) DO UPDATE
+       SET online = EXCLUDED.online, last_seen = now()`,
+    [tenantId, id, online]
   );
 }
 
-// One sensor reading. Also bumps last_seen on the device.
-async function insertTelemetry(id, metric, value) {
+// Device reported its controls. `controls` is an arbitrary object such as
+// { led: true, switch: false } or { valve: true } -- we don't care which keys.
+// The `||` operator MERGES the new keys into the existing JSON, so a device can
+// report just the one channel that changed and the rest is preserved.
+async function setState(tenantId, id, controls) {
   await pool.query(
-    `INSERT INTO telemetry (device_id, metric, value) VALUES ($1, $2, $3)`,
-    [id, metric, value]
+    `INSERT INTO devices (tenant_id, id, state, last_seen)
+     VALUES ($1, $2, $3::jsonb, now())
+     ON CONFLICT (tenant_id, id) DO UPDATE
+       SET state = devices.state || EXCLUDED.state, last_seen = now()`,
+    [tenantId, id, JSON.stringify(controls)]
   );
-  await pool.query(`UPDATE devices SET last_seen = now() WHERE id = $1`, [id]);
+}
+
+// One sensor reading. Stores the point in the history table AND updates the
+// device's "latest" blob so the dashboard list can show the current value
+// without scanning history. Note we never hard-code metric names: whatever
+// metric the device sent becomes a key in `latest`.
+async function insertTelemetry(tenantId, id, metric, value) {
+  await ensureDevice(tenantId, id);          // satisfy the telemetry foreign key
+  await pool.query(
+    `INSERT INTO telemetry (tenant_id, device_id, metric, value)
+     VALUES ($1, $2, $3, $4)`,
+    [tenantId, id, metric, value]
+  );
+  // Merge { metric: value } into the device's latest-values object.
+  await pool.query(
+    `UPDATE devices
+        SET latest = latest || jsonb_build_object($3::text, to_jsonb($4::double precision)),
+            last_seen = now()
+      WHERE tenant_id = $1 AND id = $2`,
+    [tenantId, id, metric, value]
+  );
 }
 
 // ---- Reads (driven by the dashboard / REST API) ---------------------------
+// Every read is scoped to one tenant. We LEFT JOIN device_types so each device
+// row carries its type's `capabilities` -- that's how the frontend knows which
+// columns/controls to draw without us hard-coding them here.
 
-// One device row, with its latest temperature + humidity folded in. The
-// scalar sub-selects keep this readable; at demo scale it is plenty fast.
-async function getDevice(id) {
+async function getDevice(tenantId, id) {
   const { rows } = await pool.query(
-    `SELECT d.*,
-            (SELECT value FROM telemetry t
-              WHERE t.device_id = d.id AND t.metric = 'temperature'
-              ORDER BY ts DESC LIMIT 1) AS temperature,
-            (SELECT value FROM telemetry t
-              WHERE t.device_id = d.id AND t.metric = 'humidity'
-              ORDER BY ts DESC LIMIT 1) AS humidity
+    `SELECT d.*, dt.capabilities
        FROM devices d
-      WHERE d.id = $1`,
-    [id]
+       LEFT JOIN device_types dt ON dt.id = d.type
+      WHERE d.tenant_id = $1 AND d.id = $2`,
+    [tenantId, id]
   );
   return rows[0] || null;
 }
 
-// Every device, newest-seen first. Powers the main dashboard grid.
-async function listDevices() {
+// Every device for this tenant. Powers the main dashboard grid.
+async function listDevices(tenantId) {
   const { rows } = await pool.query(
-    `SELECT d.*,
-            (SELECT value FROM telemetry t
-              WHERE t.device_id = d.id AND t.metric = 'temperature'
-              ORDER BY ts DESC LIMIT 1) AS temperature,
-            (SELECT value FROM telemetry t
-              WHERE t.device_id = d.id AND t.metric = 'humidity'
-              ORDER BY ts DESC LIMIT 1) AS humidity
+    `SELECT d.*, dt.capabilities
        FROM devices d
-      ORDER BY d.id`
+       LEFT JOIN device_types dt ON dt.id = d.type
+      WHERE d.tenant_id = $1
+      ORDER BY d.id`,
+    [tenantId]
   );
   return rows;
 }
 
-// Recent readings for one device + metric, oldest-first so a chart can just
-// draw them left to right.
-async function getTelemetry(id, metric, limit = 60) {
+// Recent readings for one device + metric, oldest-first so a chart can draw
+// them left to right.
+async function getTelemetry(tenantId, id, metric, limit = 60) {
   const { rows } = await pool.query(
     `SELECT value, ts FROM telemetry
-      WHERE device_id = $1 AND metric = $2
-      ORDER BY ts DESC LIMIT $3`,
-    [id, metric, limit]
+      WHERE tenant_id = $1 AND device_id = $2 AND metric = $3
+      ORDER BY ts DESC LIMIT $4`,
+    [tenantId, id, metric, limit]
   );
   return rows.reverse();
 }
 
 module.exports = {
   waitForDb,
-  upsertMeta, setOnline, setState, insertTelemetry,
+  getTenantByApiKey,
+  ensureDevice, upsertMeta, setOnline, setState, insertTelemetry,
   getDevice, listDevices, getTelemetry,
 };

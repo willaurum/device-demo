@@ -2,57 +2,64 @@
 // topics.js  --  the MQTT "contract"
 // ----------------------------------------------------------------------------
 // This file is the single source of truth for how the server and devices talk.
-// Everything is built on a small set of topic names with a clear convention:
 //
-//     devices/{id}/{channel}
+// WHAT CHANGED FOR MULTI-TENANCY (FEATURE 2):
+// Topics used to be   devices/{id}/{channel}.
+// They are now        tenants/{tenant}/devices/{id}/{channel}.
 //
-// DIRECTION MATTERS. Think of each channel as a one-way pipe:
+// Putting the tenant at the FRONT of the topic means the broker namespaces
+// every client's traffic separately, and the backend learns which tenant a
+// message belongs to just by reading the topic. A device for "acme" publishes
+// under tenants/acme/...; a device for "globex" under tenants/globex/...; they
+// can never see or impersonate each other's topics.
+//
+// DIRECTION MATTERS. Each channel is a one-way pipe:
 //
 //   device  -> server   meta       (retained)  who the device is
-//   device  -> server   telemetry              sensor readings (temp, humidity)
-//   device  -> server   state      (retained)  led + switch on/off
+//   device  -> server   telemetry              sensor readings (temp, flow, ...)
+//   device  -> server   state      (retained)  current controls (led, valve, ...)
 //   device  -> server   status     (retained)  "online" / "offline"
 //   server  -> device   cmd                    instructions, e.g. {"led":true}
 //
-// WHY "retained"?  A retained message is stored by the broker as the "last
-// known value" for that topic. When the backend (re)connects and subscribes,
-// the broker instantly replays the latest meta/state/status for every device,
-// so the dashboard is correct immediately instead of waiting for the next
-// update. Telemetry is NOT retained -- it's a stream, not a current value.
+// WHY "retained"?  The broker stores the last retained message per topic and
+// replays it to anyone who subscribes later, so the dashboard is correct the
+// instant the backend connects. Telemetry is NOT retained -- it's a stream.
 //
-// WHY a separate "status" channel + Last Will?  MQTT lets a client register a
-// "Last Will and Testament" when it connects: a message the broker publishes
-// automatically if the client drops without saying goodbye. Our devices set
-// their will to status="offline". So crashed/unplugged devices show as offline
-// for free -- we don't have to poll them.
-//
-// In a larger codebase you'd publish this file as a shared package so the
-// device firmware and the server literally import the same definitions. Here
-// the simulator keeps its own copy; just keep the two in sync.
+// WHY a separate "status" channel + Last Will?  A device registers a "Last Will"
+// when it connects: a message the broker publishes automatically if the device
+// drops without saying goodbye. Our devices set their will to status="offline",
+// so crashed/unplugged devices show offline for free -- no polling.
 // ============================================================================
 
-// ---- Topic builders (server -> a specific device, or naming one device) ----
-const telemetryTopic = (id) => `devices/${id}/telemetry`;
-const stateTopic     = (id) => `devices/${id}/state`;
-const statusTopic    = (id) => `devices/${id}/status`;
-const metaTopic      = (id) => `devices/${id}/meta`;
-const cmdTopic       = (id) => `devices/${id}/cmd`;
+// The shared prefix for one device. Everything else builds on this.
+const base = (tenant, id) => `tenants/${tenant}/devices/${id}`;
 
-// ---- Wildcard subscriptions (server listens to ALL devices at once) --------
-// "+" matches exactly one topic level, so "devices/+/telemetry" matches
-// "devices/ngi-001/telemetry", "devices/ngi-002/telemetry", and so on.
-const SUB_TELEMETRY = 'devices/+/telemetry';
-const SUB_STATE     = 'devices/+/state';
-const SUB_STATUS    = 'devices/+/status';
-const SUB_META      = 'devices/+/meta';
+// ---- Topic builders (name one specific device's channel) -------------------
+const telemetryTopic = (tenant, id) => `${base(tenant, id)}/telemetry`;
+const stateTopic     = (tenant, id) => `${base(tenant, id)}/state`;
+const statusTopic    = (tenant, id) => `${base(tenant, id)}/status`;
+const metaTopic      = (tenant, id) => `${base(tenant, id)}/meta`;
+const cmdTopic       = (tenant, id) => `${base(tenant, id)}/cmd`;
 
-// ---- Helpers to read a topic string back apart -----------------------------
-// "devices/ngi-001/telemetry" -> id "ngi-001", channel "telemetry"
-const deviceIdFromTopic = (topic) => topic.split('/')[1];
-const channelFromTopic  = (topic) => topic.split('/')[2];
+// ---- Wildcard subscriptions (server listens to ALL tenants + devices) ------
+// "+" matches exactly one topic level, so "tenants/+/devices/+/telemetry"
+// matches every device of every tenant. The backend is the trusted component,
+// so it is allowed to listen across tenants; it then tags each message with the
+// tenant it came from and keeps the data separate from there on.
+const SUB_TELEMETRY = 'tenants/+/devices/+/telemetry';
+const SUB_STATE     = 'tenants/+/devices/+/state';
+const SUB_STATUS    = 'tenants/+/devices/+/status';
+const SUB_META      = 'tenants/+/devices/+/meta';
+
+// ---- Helpers to pull a topic string back apart -----------------------------
+// "tenants/acme/devices/ngi-001/telemetry" splits into:
+//   [0]="tenants" [1]="acme" [2]="devices" [3]="ngi-001" [4]="telemetry"
+const tenantFromTopic   = (topic) => topic.split('/')[1];
+const deviceIdFromTopic = (topic) => topic.split('/')[3];
+const channelFromTopic  = (topic) => topic.split('/')[4];
 
 module.exports = {
   telemetryTopic, stateTopic, statusTopic, metaTopic, cmdTopic,
   SUB_TELEMETRY, SUB_STATE, SUB_STATUS, SUB_META,
-  deviceIdFromTopic, channelFromTopic,
+  tenantFromTopic, deviceIdFromTopic, channelFromTopic,
 };
