@@ -9,41 +9,45 @@
 // them for SVGs later if you want a more polished look.
 // ============================================================================
 
-import React from 'react';
+import React from "react";
 
 // The nav, as data. `id` matches the view keys App knows how to render.
 const SECTIONS = [
   {
-    title: 'Monitoring',
+    title: "Monitoring",
     items: [
-      { id: 'dashboard', label: 'Dashboard', glyph: '▦' },
-      { id: 'devices',   label: 'Devices',   glyph: '▤' },
-      { id: 'map',       label: 'Map',       glyph: '◉' },
-      { id: 'alerts',    label: 'Alerts',    glyph: '⚠', badgeKey: 'alerts' },
+      { id: "dashboard", label: "Dashboard", glyph: "▦" },
+      { id: "devices", label: "Devices", glyph: "▤" },
+      { id: "map", label: "Map", glyph: "◉" },
+      { id: "alerts", label: "Alerts", glyph: "⚠", badgeKey: "alerts" },
     ],
   },
   {
-    title: 'Analytics',
+    title: "Analytics",
     items: [
-      { id: 'telemetry', label: 'Telemetry', glyph: '∿' },
-      { id: 'reports',   label: 'Reports',   glyph: '▣' },
+      { id: "telemetry", label: "Telemetry", glyph: "∿" },
+      { id: "reports", label: "Reports", glyph: "▣" },
     ],
   },
   {
-    title: 'System',
-    items: [
-      { id: 'settings', label: 'Settings', glyph: '⚙' },
-    ],
+    title: "System",
+    items: [{ id: "settings", label: "Settings", glyph: "⚙" }],
   },
 ];
 
-export default function Sidebar({ active, onNavigate, alertCount, theme, onToggleTheme }) {
+export default function Sidebar({
+  active,
+  onNavigate,
+  alertCount,
+  theme,
+  onToggleTheme,
+}) {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
         <span className="brand-mark" />
         <div>
-          <div className="brand-name">FleetOS</div>
+          <div className="brand-name">Pulse</div>
           <div className="brand-tag">Connected Device Platform</div>
         </div>
       </div>
@@ -55,12 +59,12 @@ export default function Sidebar({ active, onNavigate, alertCount, theme, onToggl
             {section.items.map((item) => (
               <button
                 key={item.id}
-                className={`nav-item ${active === item.id ? 'active' : ''}`}
+                className={`nav-item ${active === item.id ? "active" : ""}`}
                 onClick={() => onNavigate(item.id)}
               >
                 <span className="nav-glyph">{item.glyph}</span>
                 <span className="nav-label">{item.label}</span>
-                {item.badgeKey === 'alerts' && alertCount > 0 && (
+                {item.badgeKey === "alerts" && alertCount > 0 && (
                   <span className="nav-badge">{alertCount}</span>
                 )}
               </button>
@@ -71,7 +75,7 @@ export default function Sidebar({ active, onNavigate, alertCount, theme, onToggl
 
       {/* theme toggle pinned to the bottom */}
       <button className="sidebar-theme" onClick={onToggleTheme}>
-        {theme === 'dark' ? '☀ Light mode' : '☾ Dark mode'}
+        {theme === "dark" ? "☀ Light mode" : "☾ Dark mode"}
       </button>
     </aside>
   );
