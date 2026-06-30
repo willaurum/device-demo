@@ -17,23 +17,9 @@ import Donut from './Donut.jsx';
 import AlertsList from './AlertsList.jsx';
 import DeviceTable from './DeviceTable.jsx';
 
-// Preferred colours for the two headline metrics, matching the mockup.
-const SERIES_COLORS = { temperature: '#3fd1a3', humidity: '#4aa3ff' };
-
 export default function DashboardView({
   devices, metrics, controls, alerts, kpis, types, history, onOpen, onViewAll,
 }) {
-  // Which metrics to plot on the fleet chart: prefer temperature + humidity
-  // (the classic pair), else fall back to the first couple the fleet reports.
-  let series = metrics
-    .filter((m) => m.metric in SERIES_COLORS)
-    .map((m) => ({ key: m.metric, label: m.label, color: SERIES_COLORS[m.metric] }));
-  if (series.length === 0) {
-    series = metrics.slice(0, 2).map((m, i) => ({
-      key: m.metric, label: m.label, color: i === 0 ? '#3fd1a3' : '#4aa3ff',
-    }));
-  }
-
   return (
     <div className="dashboard">
       {/* ---- KPI cards ---- */}
@@ -70,7 +56,7 @@ export default function DashboardView({
               <p className="panel-sub">Rolling average across online devices</p>
             </div>
           </div>
-          <FleetChart history={history} series={series} />
+          <FleetChart history={history} metrics={metrics} />
         </section>
 
         <div className="side-column">

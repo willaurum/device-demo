@@ -18,6 +18,7 @@ const SECTIONS = [
     items: [
       { id: 'dashboard', label: 'Dashboard', glyph: '▦' },
       { id: 'devices',   label: 'Devices',   glyph: '▤' },
+      { id: 'map',       label: 'Map',       glyph: '◉' },
       { id: 'alerts',    label: 'Alerts',    glyph: '⚠', badgeKey: 'alerts' },
     ],
   },

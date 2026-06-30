@@ -1,109 +1,193 @@
 // ============================================================================
-// FleetChart.jsx  --  multi-series area chart for fleet telemetry
+// FleetChart.jsx  --  multi-series live telemetry chart (plain SVG)
 // ----------------------------------------------------------------------------
-// Like Sparkline, we hand-draw this with plain SVG (no charting library). It
-// plots one filled area + line per series on a SHARED y-axis, so the lines can
-// cross (e.g. temperature and humidity) just like the mockup.
+// Plots fleet-average telemetry over time. Because a fleet can report wildly
+// different metrics (°C, %, L/min, bar, km/h, GPS degrees), we make the values
+// READABLE in three ways instead of cramming them onto one misleading axis:
 //
-// Input:
-//   history : [{ ts, <metricKey>: value, ... }]  -- one sample per time tick
-//   series  : [{ key, label, color }]            -- which metrics to draw
+//   1. Metric chips  -> toggle which data types are drawn.
+//   2. Legend values -> each series shows its current (latest) value + unit.
+//   3. Hover readout -> move the mouse to see every series' value at that time.
 //
-// The x-axis time labels are rendered as HTML beneath the SVG (not inside it),
-// so they stay crisp even though the SVG itself stretches to fill its width.
+// Each series is auto-scaled to its OWN min/max over the window, so differently
+// -scaled metrics are all visible; you read the real numbers from the legend
+// and the hover readout rather than from a shared y-axis.
 // ============================================================================
 
-import React from 'react';
+import React, { useState } from 'react';
+import { PALETTE } from '../lib/derive.js';
 
-const W = 1000;       // viewBox width  (the SVG scales to its container)
-const H = 320;        // viewBox height
-const PAD_Y = 12;     // vertical breathing room so lines aren't flush to edges
+const W = 1000;       // viewBox width  (SVG stretches to its container)
+const H = 300;        // viewBox height
+const PAD_Y = 14;
 
-export default function FleetChart({ history, series }) {
-  // Need at least two points to draw a line.
-  if (!history || history.length < 2) {
-    return <div className="chart-empty">collecting live telemetry…</div>;
-  }
+// Temperature/humidity get the classic green/blue; everything else cycles the
+// shared palette so any metric gets a stable colour.
+const PREFERRED = { temperature: '#3fd1a3', humidity: '#4aa3ff' };
 
-  // Shared y-range across every value of every series.
-  const allValues = [];
-  for (const s of series) {
-    for (const p of history) {
-      if (typeof p[s.key] === 'number') allValues.push(p[s.key]);
+export default function FleetChart({ history, metrics }) {
+  // Build a series descriptor per metric the fleet reports.
+  const allSeries = metrics.map((m, i) => ({
+    key: m.metric,
+    label: m.label,
+    unit: m.unit || '',
+    precision: m.precision ?? 1,
+    color: PREFERRED[m.metric] || PALETTE[i % PALETTE.length],
+  }));
+
+  // Default to temperature + humidity if present, else the first two metrics.
+  const [selected, setSelected] = useState(() => {
+    const pref = allSeries.filter((s) => s.key in PREFERRED).map((s) => s.key);
+    return pref.length ? pref : allSeries.slice(0, 2).map((s) => s.key);
+  });
+  const [hover, setHover] = useState(null);   // hovered sample index, or null
+
+  const toggle = (key) =>
+    setSelected((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+
+  const shown = allSeries.filter((s) => selected.includes(s.key));
+  const fmt = (v, p, u) => (typeof v === 'number' ? `${v.toFixed(p)}${u}` : '—');
+  const latestVal = (key) => {
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (typeof history[i][key] === 'number') return history[i][key];
     }
-  }
-  const min = Math.min(...allValues);
-  const max = Math.max(...allValues);
-  const span = max - min || 1;                       // avoid divide-by-zero
-
-  const x = (i) => (i / (history.length - 1)) * W;
-  const y = (v) => PAD_Y + (1 - (v - min) / span) * (H - 2 * PAD_Y);
-
-  // Build the line + filled-area path strings for one series.
-  const buildPaths = (key) => {
-    const pts = history
-      .map((p, i) => ({ i, v: p[key] }))
-      .filter((p) => typeof p.v === 'number');
-    if (pts.length < 2) return null;
-
-    const line = pts
-      .map((p, k) => `${k === 0 ? 'M' : 'L'} ${x(p.i).toFixed(1)} ${y(p.v).toFixed(1)}`)
-      .join(' ');
-    // The area is the same line, then down to the baseline and back to start.
-    const first = x(pts[0].i).toFixed(1);
-    const last = x(pts[pts.length - 1].i).toFixed(1);
-    const area = `${line} L ${last} ${H} L ${first} ${H} Z`;
-    return { line, area };
+    return null;
   };
 
-  // A few evenly-spaced time labels for the x-axis.
+  const chips = (
+    <div className="metric-chips">
+      {allSeries.map((s) => {
+        const on = selected.includes(s.key);
+        return (
+          <button
+            key={s.key}
+            className={`metric-chip ${on ? 'active' : ''}`}
+            onClick={() => toggle(s.key)}
+            style={on ? { borderColor: s.color, color: s.color } : undefined}
+          >
+            <span className="legend-dot" style={{ background: s.color }} />
+            {s.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  if (!history || history.length < 2) {
+    return <div>{chips}<div className="chart-empty">collecting live telemetry…</div></div>;
+  }
+
+  const x = (i) => (i / (history.length - 1)) * W;
+
+  // Build line + area paths for each shown series, each on its OWN scale. We
+  // keep the scale's y() function around so the hover dots can reuse it.
+  const seriesPaths = shown.map((s) => {
+    const vals = history.map((p) => p[s.key]).filter((v) => typeof v === 'number');
+    if (vals.length < 2) return null;
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const span = max - min || 1;
+    const y = (v) => PAD_Y + (1 - (v - min) / span) * (H - 2 * PAD_Y);
+
+    const pts = history.map((p, i) => ({ i, v: p[s.key] })).filter((p) => typeof p.v === 'number');
+    const line = pts.map((p, k) => `${k === 0 ? 'M' : 'L'} ${x(p.i).toFixed(1)} ${y(p.v).toFixed(1)}`).join(' ');
+    const area = `${line} L ${x(pts[pts.length - 1].i).toFixed(1)} ${H} L ${x(pts[0].i).toFixed(1)} ${H} Z`;
+    return { ...s, line, area, y };
+  }).filter(Boolean);
+
+  // Mouse -> nearest sample index (use the element's pixel width directly so we
+  // don't have to convert into the stretched viewBox coordinate space).
+  const onMove = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    setHover(Math.round(ratio * (history.length - 1)));
+  };
+
+  // x-axis time labels.
   const labelCount = Math.min(6, history.length);
   const labels = Array.from({ length: labelCount }, (_, k) => {
     const idx = Math.round((k / (labelCount - 1)) * (history.length - 1));
     return hhmm(history[idx].ts);
   });
 
+  const hoverPct = hover != null ? (hover / (history.length - 1)) * 100 : 0;
+
   return (
     <div className="fleetchart">
+      {chips}
+
       <div className="fleetchart-legend">
-        {series.map((s) => (
+        {shown.map((s) => (
           <span key={s.key} className="legend-item">
             <span className="legend-dot" style={{ background: s.color }} />
             {s.label}
+            <span className="legend-value">{fmt(latestVal(s.key), s.precision, s.unit)}</span>
           </span>
         ))}
       </div>
 
-      <svg className="fleetchart-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-        <defs>
-          {/* a soft top-down gradient under each line */}
-          {series.map((s) => (
-            <linearGradient key={s.key} id={`grad-${s.key}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={s.color} stopOpacity="0.28" />
-              <stop offset="100%" stopColor={s.color} stopOpacity="0" />
-            </linearGradient>
-          ))}
-        </defs>
+      <div className="fleetchart-plot" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        <svg className="fleetchart-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+          <defs>
+            {shown.map((s) => (
+              <linearGradient key={s.key} id={`grad-${s.key}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={s.color} stopOpacity="0.26" />
+                <stop offset="100%" stopColor={s.color} stopOpacity="0" />
+              </linearGradient>
+            ))}
+          </defs>
 
-        {series.map((s) => {
-          const paths = buildPaths(s.key);
-          if (!paths) return null;
-          return (
+          {/* faint horizontal gridlines for structure */}
+          {[0.25, 0.5, 0.75].map((f) => (
+            <line key={f} x1="0" x2={W} y1={f * H} y2={f * H} className="grid-line" vectorEffect="non-scaling-stroke" />
+          ))}
+
+          {seriesPaths.map((s) => (
             <g key={s.key}>
-              <path d={paths.area} fill={`url(#grad-${s.key})`} stroke="none" />
-              <path
-                d={paths.line}
-                fill="none"
-                stroke={s.color}
-                strokeWidth="2.5"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-                vectorEffect="non-scaling-stroke"  /* keep line width even when stretched */
-              />
+              <path d={s.area} fill={`url(#grad-${s.key})`} stroke="none" />
+              <path d={s.line} fill="none" stroke={s.color} strokeWidth="2.5"
+                    strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
             </g>
+          ))}
+
+          {hover != null && (
+            <line x1={x(hover)} x2={x(hover)} y1="0" y2={H} className="hover-guide" vectorEffect="non-scaling-stroke" />
+          )}
+        </svg>
+
+        {/* hover dots (HTML, so they stay round even though the SVG stretches) */}
+        {hover != null && seriesPaths.map((s) => {
+          const v = history[hover][s.key];
+          if (typeof v !== 'number') return null;
+          return (
+            <span
+              key={s.key}
+              className="hover-dot"
+              style={{ left: `${hoverPct}%`, top: `${(s.y(v) / H) * 100}%`, background: s.color }}
+            />
           );
         })}
-      </svg>
+
+        {/* hover readout: every shown series' value at the hovered time */}
+        {hover != null && shown.length > 0 && (
+          <div
+            className="hover-tip"
+            style={{
+              left: `${hoverPct}%`,
+              transform: hoverPct > 50 ? 'translateX(calc(-100% - 10px))' : 'translateX(10px)',
+            }}
+          >
+            <div className="hover-time">{hhmm(history[hover].ts)}</div>
+            {shown.map((s) => (
+              <div key={s.key} className="hover-row">
+                <span className="legend-dot" style={{ background: s.color }} />
+                <span className="hover-name">{s.label}</span>
+                <span className="hover-val">{fmt(history[hover][s.key], s.precision, s.unit)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="fleetchart-axis">
         {labels.map((l, i) => <span key={i}>{l}</span>)}

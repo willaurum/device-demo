@@ -21,6 +21,7 @@ import Sidebar from './components/Sidebar.jsx';
 import Topbar from './components/Topbar.jsx';
 import DashboardView from './components/DashboardView.jsx';
 import DeviceTable from './components/DeviceTable.jsx';
+import MapView from './components/MapView.jsx';
 import AlertsList from './components/AlertsList.jsx';
 import DeviceDetail from './components/DeviceDetail.jsx';
 import AddDeviceModal from './components/AddDeviceModal.jsx';
@@ -28,6 +29,7 @@ import AddDeviceModal from './components/AddDeviceModal.jsx';
 const VIEW_TITLES = {
   dashboard: 'Dashboard',
   devices: 'Devices',
+  map: 'Map',
   alerts: 'Alerts',
   telemetry: 'Telemetry',
   reports: 'Reports',
@@ -177,6 +179,9 @@ export default function App() {
             <DeviceTable devices={deviceList} metrics={metrics} controls={controls} onOpen={setSelectedId} />
           </section>
         );
+
+      case 'map':
+        return <MapView devices={deviceList} onOpen={setSelectedId} theme={theme} />;
 
       case 'alerts':
         return (

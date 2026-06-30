@@ -181,11 +181,60 @@ body {
 
 /* ---- 6. fleet chart + donut + alerts ------------------------------------ */
 .fleetchart { position: relative; }
-.fleetchart-legend { display: flex; justify-content: flex-end; gap: 16px; margin-bottom: 8px; }
-.legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
 .legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+
+/* metric toggle chips above the chart */
+.metric-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.metric-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: none; border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: 999px; padding: 4px 11px; font-size: 12px; cursor: pointer;
+  font-family: inherit; transition: all 0.15s;
+}
+.metric-chip:hover { color: var(--text); }
+.metric-chip.active { background: var(--surface-2); }
+
+/* legend with live current values */
+.fleetchart-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 16px; margin-bottom: 8px; }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.legend-value { font-family: var(--mono); color: var(--text); margin-left: 2px; }
+
+.fleetchart-plot { position: relative; }
 .fleetchart-svg { width: 100%; height: 300px; display: block; }
 .fleetchart-axis { display: flex; justify-content: space-between; margin-top: 8px; font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
+.grid-line { stroke: var(--border); stroke-width: 1; opacity: 0.5; }
+
+/* hover guide + per-series readout */
+.hover-guide { stroke: var(--text-dim); stroke-width: 1; stroke-dasharray: 3 3; }
+.hover-dot {
+  position: absolute; width: 9px; height: 9px; border-radius: 50%;
+  transform: translate(-50%, -50%); pointer-events: none;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.hover-tip {
+  position: absolute; top: 8px; pointer-events: none; z-index: 2;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px; min-width: 140px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.hover-time { font-family: var(--mono); color: var(--text-dim); font-size: 11px; margin-bottom: 6px; }
+.hover-row { display: flex; align-items: center; gap: 7px; padding: 2px 0; }
+.hover-name { flex: 1; }
+.hover-val { font-family: var(--mono); color: var(--text); }
+
+/* map view (Leaflet + OpenStreetMap) */
+/* Leaflet gives its panes/controls high z-indexes (up to ~1000). Without its
+   own stacking context those bleed ABOVE the app's overlays (detail slide-over,
+   modal, sticky topbar). `isolation: isolate` (+ z-index:0) traps Leaflet's
+   whole z-index ladder inside this box, so the map can't paint over anything
+   outside it. */
+.map-leaflet {
+  height: 560px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border);
+  position: relative; z-index: 0; isolation: isolate;
+}
+.map-note { margin: 10px 0 0; font-size: 12px; }
+/* Leaflet popups/tooltips inherit the page font; keep them legible on dark. */
+.leaflet-container { font-family: var(--sans); }
 
 .types-body { display: flex; align-items: center; gap: 20px; }
 .donut { flex-shrink: 0; }
@@ -220,11 +269,15 @@ body {
 .filter-pill:hover { color: var(--text); }
 .filter-pill.active { color: var(--accent); border-color: rgba(63, 209, 163, 0.4); background: rgba(63, 209, 163, 0.1); }
 
+/* horizontal scroller so a wide registry (many metric/control columns) scrolls
+   left/right cleanly instead of overflowing the page */
+.table-scroll { overflow-x: auto; }
 .device-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .device-table th {
   text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.6px; color: var(--text-dim);
   padding: 0 16px 12px; border-bottom: 1px solid var(--border);
+  white-space: nowrap;
 }
 .device-table th:first-child { padding-left: 0; width: 20px; }
 .device-table th.sortable { cursor: pointer; user-select: none; }
@@ -236,7 +289,7 @@ body {
 .device-row:hover { background: var(--surface-2); }
 .device-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .device-row.is-offline { opacity: 0.5; }
-.device-table td { padding: 11px 16px; vertical-align: middle; }
+.device-table td { padding: 11px 16px; vertical-align: middle; white-space: nowrap; }
 .device-table td:first-child { padding-left: 0; }
 .row-name { font-size: 14px; font-weight: 500; }
 .row-id { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-top: 2px; }

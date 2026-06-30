@@ -50,35 +50,39 @@ export default function DeviceTable({ devices, metrics, controls, onOpen }) {
         ))}
       </div>
 
-      <table className="device-table">
-        <thead>
-          <tr>
-            <th></th>
-            <SortTh label="Device"   col="name"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortTh label="Location" col="location" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            <SortTh label="Type"     col="type"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            {metrics.map((m) => (
-              <SortTh key={m.metric} label={m.label} col={`m:${m.metric}`}
-                      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+      {/* Many device types -> many columns. Wrap in a horizontal scroller so
+          the table scrolls left/right cleanly instead of overflowing the page. */}
+      <div className="table-scroll">
+        <table className="device-table">
+          <thead>
+            <tr>
+              <th></th>
+              <SortTh label="Device"   col="name"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortTh label="Location" col="location" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortTh label="Type"     col="type"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              {metrics.map((m) => (
+                <SortTh key={m.metric} label={m.label} col={`m:${m.metric}`}
+                        sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              ))}
+              {controls.map((c) => (
+                <SortTh key={c.key} label={c.label} col={`c:${c.key}`}
+                        sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((device) => (
+              <DeviceRow
+                key={device.id}
+                device={device}
+                metrics={metrics}
+                controls={controls}
+                onOpen={() => onOpen(device.id)}
+              />
             ))}
-            {controls.map((c) => (
-              <SortTh key={c.key} label={c.label} col={`c:${c.key}`}
-                      sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {visible.map((device) => (
-            <DeviceRow
-              key={device.id}
-              device={device}
-              metrics={metrics}
-              controls={controls}
-              onOpen={() => onOpen(device.id)}
-            />
-          ))}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
