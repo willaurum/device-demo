@@ -12,20 +12,31 @@ export default function AlertsList({ alerts, limit }) {
   const shown = limit ? alerts.slice(0, limit) : alerts;
 
   if (shown.length === 0) {
-    return <div className="alerts-empty">No active alerts — all clear.</div>;
+    return <div className="alerts-empty">No alerts yet — all clear.</div>;
   }
 
   return (
     <ul className="alerts-list">
       {shown.map((a) => (
-        <li key={a.key} className={`alert-item sev-${a.severity}`}>
+        // `resolved` dims alerts whose condition has cleared; `unread` bolds the
+        // ones the user hasn't reviewed yet. Both default off for plain alerts.
+        <li
+          key={a.key}
+          className={`alert-item sev-${a.severity}` +
+            (a.active === false ? ' resolved' : '') +
+            (a.read === false ? ' unread' : '')}
+        >
           <span className="alert-rail" />
           <span className="alert-icon">{ICON[a.severity]}</span>
           <div className="alert-body">
-            <div className="alert-title">{a.title}</div>
+            <div className="alert-title">
+              {a.read === false && <span className="unread-dot" />}
+              {a.title}
+              {a.active === false && <span className="resolved-tag">resolved</span>}
+            </div>
             <div className="alert-sub">{a.sub}</div>
           </div>
-          <span className="alert-time">{timeAgo(a.ts)}</span>
+          <span className="alert-time">{timeAgo(a.firstSeen ?? a.ts)}</span>
         </li>
       ))}
     </ul>

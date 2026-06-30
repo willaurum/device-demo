@@ -133,6 +133,33 @@ const FLEET = [
   { id: 'gps-002',  type: 'GPS-100',  name: 'Service Truck 3',   location: 'Metro Route B' },
 ];
 
+// ---- Optional bulk devices (env-driven) ------------------------------------
+// On top of the named FLEET above, you can auto-generate any number of extra
+// devices of ONE type -- handy for load-testing the dashboard with a big fleet.
+// Configure these on the simulator service in docker-compose.yml:
+//
+//   DEVICE_COUNT  how many to generate   (default 0 = none, just the named fleet)
+//   DEVICE_TYPE   which type to generate (default NGI-3000; must exist in TYPE_DEFS)
+//
+// Generated ids are prefixed "auto-" so they never collide with the named ones.
+const genCount = Number(process.env.DEVICE_COUNT) || 0;
+const genType = process.env.DEVICE_TYPE || 'NGI-3000';
+if (genCount > 0) {
+  if (!TYPE_DEFS[genType]) {
+    console.error(`[sim] DEVICE_TYPE "${genType}" is unknown; skipping ${genCount} generated devices`);
+  } else {
+    for (let n = 1; n <= genCount; n++) {
+      FLEET.push({
+        id: `auto-${String(n).padStart(4, '0')}`,
+        type: genType,
+        name: `Auto ${genType} ${n}`,
+        location: `Zone ${((n - 1) % 8) + 1}`,
+      });
+    }
+    console.log(`[sim] generated ${genCount} extra ${genType} device(s)`);
+  }
+}
+
 // ---- One simulated device --------------------------------------------------
 function startDevice(spec) {
   const def = TYPE_DEFS[spec.type];

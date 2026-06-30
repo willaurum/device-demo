@@ -15,7 +15,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { fetchDevices, connectWebSocket } from './api.js';
 import { deriveColumns, computeKpis, typeCounts, fleetAverage, toCsv } from './lib/derive.js';
-import { computeAlerts } from './lib/alerts.js';
+import { computeAlerts, mergeAlertLog } from './lib/alerts.js';
 
 import Sidebar from './components/Sidebar.jsx';
 import Topbar from './components/Topbar.jsx';
@@ -48,6 +48,13 @@ export default function App() {
   const [activeView, setActiveView] = useState('dashboard');
   const [addOpen, setAddOpen] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+
+  // Persistent alert log: alerts stay here once fired (active or resolved) so
+  // they can be reviewed in the Alerts tab. Seeded from localStorage so it
+  // survives a refresh.
+  const [alertLog, setAlertLog] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('alertLog')) || []; } catch { return []; }
+  });
 
   // A ref mirror of `devices` so the sampling interval below always reads the
   // latest snapshot without re-subscribing every render.
@@ -99,13 +106,39 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
+  // Fold currently-active alerts into the persistent log whenever devices change.
+  useEffect(() => {
+    const active = computeAlerts(Object.values(devices));
+    setAlertLog((prev) => mergeAlertLog(prev, active, Date.now()));
+  }, [devices]);
+
+  // Persist the log so it survives a refresh.
+  useEffect(() => {
+    localStorage.setItem('alertLog', JSON.stringify(alertLog));
+  }, [alertLog]);
+
+  // Viewing the Alerts tab marks everything read (the badge clears) -- but the
+  // alerts REMAIN in the log. Re-runs while on the tab so alerts that arrive
+  // while you're looking get marked read too.
+  useEffect(() => {
+    if (activeView !== 'alerts') return;
+    setAlertLog((prev) => (prev.some((r) => !r.read) ? prev.map((r) => ({ ...r, read: true })) : prev));
+  }, [activeView, alertLog]);
+
   // ---- derive everything the views need ------------------------------------
   const deviceList = Object.values(devices);
   const { metrics, controls } = deriveColumns(deviceList);
-  const alerts = computeAlerts(deviceList);
-  const kpis = computeKpis(deviceList, alerts);
+  const activeAlerts = computeAlerts(deviceList);          // currently-true (for the KPI card)
+  const kpis = computeKpis(deviceList, activeAlerts);
   const types = typeCounts(deviceList);
   const selected = selectedId ? devices[selectedId] : null;
+
+  // Alert log for display: active first, then newest first.
+  const sortedAlerts = [...alertLog].sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return b.firstSeen - a.firstSeen;
+  });
+  const unreadCount = alertLog.filter((r) => !r.read).length;
 
   // ---- actions -------------------------------------------------------------
   const exportCsv = () => {
@@ -124,7 +157,7 @@ export default function App() {
       <Sidebar
         active={activeView}
         onNavigate={setActiveView}
-        alertCount={alerts.length}
+        alertCount={unreadCount}
         theme={theme}
         onToggleTheme={toggleTheme}
       />
@@ -186,8 +219,13 @@ export default function App() {
       case 'alerts':
         return (
           <section className="panel">
-            <div className="panel-head"><h3>Active Alerts</h3></div>
-            <AlertsList alerts={alerts} />
+            <div className="panel-head">
+              <div>
+                <h3>Alerts</h3>
+                <p className="panel-sub">Active and resolved · newest first</p>
+              </div>
+            </div>
+            <AlertsList alerts={sortedAlerts} />
           </section>
         );
 
@@ -203,7 +241,7 @@ export default function App() {
             devices={deviceList}
             metrics={metrics}
             controls={controls}
-            alerts={alerts}
+            alerts={sortedAlerts}
             kpis={kpis}
             types={types}
             history={history}

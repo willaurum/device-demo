@@ -71,3 +71,54 @@ export function computeAlerts(devices) {
 
   return alerts;
 }
+
+// ----------------------------------------------------------------------------
+// mergeAlertLog  --  fold the CURRENTLY-active alerts into a persistent log.
+// ----------------------------------------------------------------------------
+// computeAlerts() only reports what's true right now, so an alert vanishes the
+// moment its condition clears. The dashboard instead keeps a LOG: once an alert
+// fires it stays in the list (so it can be reviewed in the Alerts tab), even
+// after it resolves. Each log entry tracks:
+//   firstSeen  when it first fired        active  is the condition still true?
+//   read       has the user seen it?      severity/title/sub  captured at firing
+//
+// We return the SAME array reference when nothing changed, so React can skip a
+// re-render (important: this runs on every device update). Note we deliberately
+// don't rewrite title/sub for a still-active alert each tick -- the log records
+// the event as first seen, and that keeps updates (and re-renders) to a minimum.
+const LOG_CAP = 200;
+
+export function mergeAlertLog(prev, active, now) {
+  const activeByKey = new Map(active.map((a) => [a.key, a]));
+  const known = new Set(prev.map((r) => r.key));
+  let changed = false;
+
+  const next = prev.map((r) => {
+    const a = activeByKey.get(r.key);
+    if (a) {
+      // Was resolved and just fired again -> reactivate + mark unread.
+      if (!r.active) { changed = true; return { ...r, active: true, read: false, lastSeen: now }; }
+      return r;                                  // still active, no change
+    }
+    // No longer active -> mark resolved (but keep it in the log).
+    if (r.active) { changed = true; return { ...r, active: false, lastSeen: now }; }
+    return r;
+  });
+
+  // Brand-new alerts we've never logged before.
+  for (const a of active) {
+    if (!known.has(a.key)) {
+      next.push({
+        key: a.key, severity: a.severity, title: a.title, sub: a.sub,
+        firstSeen: now, lastSeen: now, active: true, read: false,
+      });
+      changed = true;
+    }
+  }
+
+  if (!changed) return prev;
+  // Cap the log so it can't grow without bound (newest kept).
+  return next.length > LOG_CAP
+    ? [...next].sort((x, y) => y.firstSeen - x.firstSeen).slice(0, LOG_CAP)
+    : next;
+}
