@@ -8,7 +8,7 @@
 
 import React from 'react';
 
-export default function Sparkline({ points, width = 520, height = 120, unit = '' }) {
+export default function Sparkline({ points, width = 520, height = 120, unit = '', precision = 1 }) {
   if (!points || points.length < 2) {
     return <div className="chart-empty">collecting data…</div>;
   }
@@ -38,9 +38,9 @@ export default function Sparkline({ points, width = 520, height = 120, unit = ''
             strokeLinecap="round" strokeLinejoin="round" />
       {/* a dot on the most recent reading */}
       <circle cx={x(values.length - 1)} cy={y(last)} r="3" fill="currentColor" />
-      {/* min / max labels */}
-      <text x={pad} y={14} className="chart-tick">{max.toFixed(1)}{unit}</text>
-      <text x={pad} y={height - 4} className="chart-tick">{min.toFixed(1)}{unit}</text>
+      {/* min / max labels (decimals come from the metric's precision hint) */}
+      <text x={pad} y={14} className="chart-tick">{max.toFixed(precision)}{unit}</text>
+      <text x={pad} y={height - 4} className="chart-tick">{min.toFixed(precision)}{unit}</text>
     </svg>
   );
 }

@@ -3,23 +3,17 @@
 // ----------------------------------------------------------------------------
 // Ties the pieces together and exposes the REST API the dashboard calls:
 //
-//   GET  /api/health                        is the backend up? (no auth)
-//   GET  /api/me                            who am I? -> the logged-in tenant
-//   GET  /api/devices                       list THIS tenant's devices
+//   GET  /api/health                        is the backend up?
+//   GET  /api/devices                       list all devices
 //   GET  /api/devices/:id/telemetry?metric= recent readings for a chart
 //   POST /api/devices/:id/command           set a control on a device
 //
 // Plus a WebSocket at /ws for live pushes (handled in ws.js).
 //
-// AUTH (FEATURE 2): every /api route except /health is behind requireAuth, so
-// the caller must present a valid API key. That middleware attaches req.tenant,
-// and every handler below scopes its work to req.tenant.id. There is no way to
-// reach another tenant's data through these routes.
-//
-// CAPABILITIES (FEATURE 1): the command route no longer hard-codes "led". It
-// looks up the device's type capabilities and only allows commands that the
-// type declares as writable controls -- so the SAME endpoint drives an LED, a
-// valve, or anything a future device type adds.
+// CAPABILITIES (what makes the backend versatile): the command route does NOT
+// hard-code "led". It looks up the device's type capabilities and only allows
+// commands that the type declares as writable controls -- so the SAME endpoint
+// drives an LED, a valve, or anything a future device type adds.
 //
 // Startup order is deliberate: wait for the DB, then start MQTT (so handlers
 // can write to a ready DB), then start listening for HTTP/WebSocket.
@@ -30,7 +24,6 @@ const express = require('express');
 const db = require('./db');
 const ws = require('./ws');
 const mqttClient = require('./mqtt');
-const { requireAuth } = require('./auth');
 
 const app = express();
 app.use(express.json()); // parse JSON request bodies (for POST command)
@@ -38,22 +31,12 @@ app.use(express.json()); // parse JSON request bodies (for POST command)
 // ---- REST routes -----------------------------------------------------------
 
 // Health check -- handy for "is the backend up?" and for load balancers later.
-// Intentionally NOT behind auth so a probe doesn't need a key.
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
-// Everything below this line requires a valid API key. requireAuth resolves it
-// to a tenant and hangs it on req.tenant; if the key is bad it answers 401 and
-// the handler never runs.
-app.use('/api', requireAuth);
-
-// "Who am I?" The dashboard calls this right after login to confirm the key is
-// valid and to show the client's name in the header.
-app.get('/api/me', (req, res) => res.json(req.tenant));
-
-// List every device for THIS tenant (the main dashboard grid).
+// List every device for the main dashboard grid.
 app.get('/api/devices', async (req, res) => {
   try {
-    res.json(await db.listDevices(req.tenant.id));
+    res.json(await db.listDevices());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -66,7 +49,7 @@ app.get('/api/devices/:id/telemetry', async (req, res) => {
   try {
     const metric = req.query.metric || 'temperature';
     const limit = Math.min(Number(req.query.limit) || 60, 500);
-    res.json(await db.getTelemetry(req.tenant.id, req.params.id, metric, limit));
+    res.json(await db.getTelemetry(req.params.id, metric, limit));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -85,7 +68,7 @@ app.post('/api/devices/:id/command', async (req, res) => {
   try {
     const { control, value } = req.body || {};
 
-    const device = await db.getDevice(req.tenant.id, req.params.id);
+    const device = await db.getDevice(req.params.id);
     if (!device) return res.status(404).json({ error: 'device not found' });
 
     // capabilities comes from the joined device_types row. controls is the list
@@ -103,7 +86,7 @@ app.post('/api/devices/:id/command', async (req, res) => {
       return res.status(400).json({ error: `value for "${control}" must be a ${spec.type}` });
     }
 
-    mqttClient.publishCommand(req.tenant.id, req.params.id, { [control]: value });
+    mqttClient.publishCommand(req.params.id, { [control]: value });
     res.json({ ok: true, sent: { [control]: value } });
   } catch (err) {
     res.status(500).json({ error: err.message });

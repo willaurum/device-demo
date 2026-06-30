@@ -40,7 +40,7 @@ export default function DeviceRow({ device, metrics, controls, onOpen }) {
       {/* telemetry columns: read from device.latest */}
       {metrics.map((m) => (
         <td key={m.metric} className="num">
-          {fmt(device.latest?.[m.metric], m.unit)}
+          {fmt(device.latest?.[m.metric], m.unit, m.precision)}
         </td>
       ))}
 
@@ -92,8 +92,10 @@ function ControlCell({ device, control }) {
   );
 }
 
-// Format a numeric reading with its unit, or "—" if we have no value.
-function fmt(n, unit) {
+// Format a numeric reading with its unit, or "—" if we have no value. The
+// `precision` (decimal places) comes from the metric's capability definition --
+// e.g. 1 for temperature, 5 for GPS latitude. Defaults to 1 when unspecified.
+function fmt(n, unit, precision = 1) {
   if (n === null || n === undefined) return '—';
-  return `${Number(n).toFixed(1)}${unit || ''}`;
+  return `${Number(n).toFixed(precision)}${unit || ''}`;
 }

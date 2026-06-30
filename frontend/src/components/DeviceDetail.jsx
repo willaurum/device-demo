@@ -82,7 +82,7 @@ export default function DeviceDetail({ device, livePoint, onClose }) {
               </select>
             )}
             <div className="chart-wrap">
-              <Sparkline points={history} unit={metricDef?.unit || ''} />
+              <Sparkline points={history} unit={metricDef?.unit || ''} precision={metricDef?.precision} />
             </div>
           </section>
         )}

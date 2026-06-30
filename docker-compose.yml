@@ -84,9 +84,9 @@ services:
   # each announces itself, streams telemetry, reports its controls, and obeys
   # commands. Swap this out for real hardware later and nothing else changes.
   #
-  # The fleet is now defined explicitly in simulator/src/index.js (the FLEET
-  # array) so it can span MULTIPLE TENANTS and MULTIPLE DEVICE TYPES -- those
-  # tenant ids and type ids must match the rows seeded in backend/db/init.sql.
+  # The fleet is defined explicitly in simulator/src/index.js (the FLEET array)
+  # and can mix MULTIPLE DEVICE TYPES -- each type's metric/control keys must
+  # match a row in device_types in backend/db/init.sql.
   # ---------------------------------------------------------------------------
   simulator:
     build: ./simulator
@@ -103,6 +103,11 @@ services:
   # ---------------------------------------------------------------------------
   frontend:
     build: ./frontend
+    environment:
+      # Inside the compose network the backend is reached by its service name.
+      # (Running `npm run dev` on your host instead, vite.config falls back to
+      # http://localhost:5000.)
+      VITE_PROXY_TARGET: http://backend:5000
     ports:
       - "80:5173"
     depends_on:

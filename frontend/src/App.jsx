@@ -1,217 +1,144 @@
 // ============================================================================
-// App.jsx  --  the dashboard's brain
+// App.jsx  --  the application shell + state owner
 // ----------------------------------------------------------------------------
 // Responsibilities:
-//   - gate the whole app behind an API key (show <Login> until we have one)
-//   - load the device list for the logged-in tenant
-//   - hold every device in a map keyed by id and fold live updates into it
-//   - build the table COLUMNS dynamically from each device type's capabilities
-//   - render the fleet table and a detail panel for the selected device
+//   - load the device list, hold it in a map keyed by id, fold in live updates
+//   - keep a rolling buffer of fleet-average telemetry for the live chart
+//   - derive everything the UI needs (columns, KPIs, type counts, alerts)
+//   - render the shell: Sidebar + Topbar + the active view, plus the detail
+//     slide-over and the "add device" modal
 //
-// TWO TEMPLATE FEATURES SHOW UP HERE:
-//
-//   FEATURE 2 (auth): if there's no key (or the backend returns 401) we render
-//     <Login>. Once authenticated we show the tenant's name + a Sign out button.
-//
-//   FEATURE 1 (capabilities): we DON'T hard-code "Temp / Humidity / LED /
-//     Switch" columns anymore. We look at every device's `capabilities` and
-//     build one column per telemetry metric and per control found across the
-//     fleet. Add a new device type in the DB and its columns appear here with
-//     zero changes to this file.
+// The heavy lifting (turning devices into numbers) lives in lib/derive.js and
+// lib/alerts.js so this file stays about wiring and layout.
 // ============================================================================
 
-import React, { useEffect, useState } from 'react';
-import {
-  fetchMe, fetchDevices, connectWebSocket,
-  getApiKey, setApiKey, clearApiKey,
-} from './api.js';
-import Login from './components/Login.jsx';
-import DeviceRow from './components/DeviceRow.jsx';
+import React, { useEffect, useRef, useState } from 'react';
+import { fetchDevices, connectWebSocket } from './api.js';
+import { deriveColumns, computeKpis, typeCounts, fleetAverage, toCsv } from './lib/derive.js';
+import { computeAlerts } from './lib/alerts.js';
+
+import Sidebar from './components/Sidebar.jsx';
+import Topbar from './components/Topbar.jsx';
+import DashboardView from './components/DashboardView.jsx';
+import DeviceTable from './components/DeviceTable.jsx';
+import AlertsList from './components/AlertsList.jsx';
 import DeviceDetail from './components/DeviceDetail.jsx';
+import AddDeviceModal from './components/AddDeviceModal.jsx';
+
+const VIEW_TITLES = {
+  dashboard: 'Dashboard',
+  devices: 'Devices',
+  alerts: 'Alerts',
+  telemetry: 'Telemetry',
+  reports: 'Reports',
+  settings: 'Settings',
+};
+
+// How many fleet-average samples to keep on the live chart (~4 min at 3s each).
+const HISTORY_CAP = 80;
 
 export default function App() {
-  // ---- auth state ----------------------------------------------------------
-  // `apiKey` drives everything: empty -> show login; set -> try to load data.
-  const [apiKey, setKey] = useState(() => getApiKey());
-  const [tenant, setTenant] = useState(null);     // { id, name } once verified
-  const [authError, setAuthError] = useState('');
-
-  // ---- data state ----------------------------------------------------------
   const [devices, setDevices] = useState({});
   const [selectedId, setSelectedId] = useState(null);
   const [connected, setConnected] = useState(false);
-  const [livePoint, setLivePoint] = useState(null);  // newest telemetry point
+  const [livePoint, setLivePoint] = useState(null);     // newest telemetry point (for detail chart)
+  const [history, setHistory] = useState([]);            // rolling fleet averages (for FleetChart)
+  const [activeView, setActiveView] = useState('dashboard');
+  const [addOpen, setAddOpen] = useState(false);
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
 
-  const [sortKey, setSortKey] = useState('name');
-  const [sortDir, setSortDir] = useState('asc');
+  // A ref mirror of `devices` so the sampling interval below always reads the
+  // latest snapshot without re-subscribing every render.
+  const devicesRef = useRef(devices);
+  useEffect(() => { devicesRef.current = devices; }, [devices]);
 
-  // Apply the theme to the document and remember it.
+  // Apply + remember the theme.
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
   const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
 
-  // ---- login / logout helpers ----------------------------------------------
-  const handleLogin = (key) => {
-    setAuthError('');
-    setApiKey(key);     // persist to localStorage
-    setKey(key);        // trigger the data-loading effect below
-  };
-  const handleLogout = () => {
-    clearApiKey();
-    setKey('');
-    setTenant(null);
-    setDevices({});
-    setSelectedId(null);
-  };
-
-  // ---- load data once we have a key ----------------------------------------
-  // Re-runs whenever the key changes (i.e. right after login). If the key is
-  // bad, fetchMe throws a 401 and we drop back to the login screen.
+  // Load devices, then open the live WebSocket. Runs once on mount.
   useEffect(() => {
-    if (!apiKey) return;
-
-    let ws;
-    let cancelled = false;
-
-    (async () => {
-      try {
-        // 1. Confirm the key and learn who we are.
-        const me = await fetchMe();
-        if (cancelled) return;
-        setTenant(me);
-
-        // 2. Seed the device map from the REST list.
-        const list = await fetchDevices();
-        if (cancelled) return;
+    fetchDevices()
+      .then((list) => {
         const map = {};
         for (const d of list) map[d.id] = d;
         setDevices(map);
+      })
+      .catch((err) => console.error(err));
 
-        // 3. Live updates over the WebSocket (scoped to our tenant server-side).
-        ws = connectWebSocket((msg) => {
-          setConnected(true);
-          if (msg.type === 'device') {
-            setDevices((prev) => ({ ...prev, [msg.device.id]: msg.device }));
-          } else if (msg.type === 'telemetry') {
-            setLivePoint({ id: msg.id, metric: msg.metric, value: msg.value, ts: msg.ts });
-          }
-        });
-      } catch (err) {
-        if (cancelled) return;
-        if (err.status === 401) {
-          // Bad/expired key: clear it and show the login screen with a message.
-          clearApiKey();
-          setKey('');
-          setTenant(null);
-          setAuthError('That API key was not accepted. Please try again.');
-        } else {
-          console.error(err);
-        }
+    const ws = connectWebSocket((msg) => {
+      setConnected(true);
+      if (msg.type === 'device') {
+        setDevices((prev) => ({ ...prev, [msg.device.id]: msg.device }));
+      } else if (msg.type === 'telemetry') {
+        setLivePoint({ id: msg.id, metric: msg.metric, value: msg.value, ts: msg.ts });
       }
-    })();
+    });
 
-    // Clean up the socket if the key changes or the component unmounts.
-    return () => { cancelled = true; if (ws) ws.close(); };
-  }, [apiKey]);
+    return () => ws.close();
+  }, []);
 
-  // ---- no key yet -> show the login gate -----------------------------------
-  if (!apiKey) {
-    return <Login onSubmit={handleLogin} error={authError} />;
-  }
+  // Every 3s, snapshot the current fleet averages and append to the chart
+  // buffer. Sampling on a timer (instead of per-message) keeps the line smooth
+  // and the work bounded no matter how many devices are streaming.
+  useEffect(() => {
+    const tick = () => {
+      const list = Object.values(devicesRef.current);
+      if (list.length === 0) return;
+      const { metrics } = deriveColumns(list);
+      const avg = fleetAverage(list, metrics.map((m) => m.metric));
+      if (Object.keys(avg).length === 0) return;
+      setHistory((prev) => [...prev, { ts: Date.now(), ...avg }].slice(-HISTORY_CAP));
+    };
+    const id = setInterval(tick, 3000);
+    return () => clearInterval(id);
+  }, []);
 
-  // ---- derive table columns from capabilities (FEATURE 1) ------------------
+  // ---- derive everything the views need ------------------------------------
   const deviceList = Object.values(devices);
   const { metrics, controls } = deriveColumns(deviceList);
-  const online = deviceList.filter((d) => d.online).length;
+  const alerts = computeAlerts(deviceList);
+  const kpis = computeKpis(deviceList, alerts);
+  const types = typeCounts(deviceList);
   const selected = selectedId ? devices[selectedId] : null;
 
-  // Sorting works for the fixed columns (name/location/type) AND for any
-  // metric or control column. We encode metric columns as "m:<metric>" and
-  // control columns as "c:<key>" so one handler covers them all.
-  const handleSort = (key) => {
-    if (sortKey === key) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortKey(key);
-      setSortDir('asc');
-    }
+  // ---- actions -------------------------------------------------------------
+  const exportCsv = () => {
+    const csv = toCsv(deviceList, metrics, controls);
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'devices.csv';
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const sortedDevices = [...deviceList].sort((a, b) => {
-    let av = valueForSort(a, sortKey);
-    let bv = valueForSort(b, sortKey);
-    if (av < bv) return sortDir === 'asc' ? -1 : 1;
-    if (av > bv) return sortDir === 'asc' ? 1 : -1;
-    return 0;
-  });
-
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark" />
-          <div>
-            <h1>Device Console</h1>
-            {/* Show the logged-in client so the isolation is obvious. */}
-            <p className="brand-sub">{tenant ? tenant.name : 'loading…'}</p>
-          </div>
-        </div>
-        <div className="fleet-stats">
-          <Stat label="devices" value={deviceList.length} />
-          <Stat label="online" value={online} accent />
-          <span className={`link-pill ${connected ? 'on' : 'off'}`}>
-            <span className="dot" /> {connected ? 'live' : 'connecting'}
-          </span>
-          <button className="theme-btn" onClick={toggleTheme}>
-            {theme === 'dark' ? '☀ Light' : '☾ Dark'}
-          </button>
-          <button className="logout-btn" onClick={handleLogout}>Sign out</button>
-        </div>
-      </header>
+    <div className="shell">
+      <Sidebar
+        active={activeView}
+        onNavigate={setActiveView}
+        alertCount={alerts.length}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+      />
 
-      <main className="table-wrap">
-        {deviceList.length === 0 ? (
-          <div className="empty">
-            Waiting for devices to report in. If this stays empty, check that the
-            simulator container is running.
-          </div>
-        ) : (
-          <table className="device-table">
-            <thead>
-              <tr>
-                <th></th>
-                <SortTh label="Device"   col="name"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <SortTh label="Location" col="location" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                <SortTh label="Type"     col="type"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                {/* one column per telemetry metric found across the fleet */}
-                {metrics.map((m) => (
-                  <SortTh key={m.metric} label={m.label} col={`m:${m.metric}`}
-                          sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                ))}
-                {/* one column per control found across the fleet */}
-                {controls.map((c) => (
-                  <SortTh key={c.key} label={c.label} col={`c:${c.key}`}
-                          sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedDevices.map((device) => (
-                <DeviceRow
-                  key={device.id}
-                  device={device}
-                  metrics={metrics}
-                  controls={controls}
-                  onOpen={() => setSelectedId(device.id)}
-                />
-              ))}
-            </tbody>
-          </table>
-        )}
-      </main>
+      <div className="main">
+        <Topbar
+          title={VIEW_TITLES[activeView]}
+          connected={connected}
+          onExport={exportCsv}
+          onAddDevice={() => setAddOpen(true)}
+        />
+
+        <div className="view">
+          {renderView()}
+        </div>
+      </div>
 
       {selected && (
         <DeviceDetail
@@ -220,67 +147,79 @@ export default function App() {
           onClose={() => setSelectedId(null)}
         />
       )}
+
+      <AddDeviceModal open={addOpen} onClose={() => setAddOpen(false)} />
     </div>
   );
-}
 
-// ---- helpers ---------------------------------------------------------------
-
-// Walk every device's capabilities and collect the distinct telemetry metrics
-// and controls across the whole fleet. Different device types contribute
-// different columns; a device simply shows "—" where it lacks one. First
-// definition of a metric/control wins (for its label/unit).
-function deriveColumns(devices) {
-  const metrics = [];
-  const controls = [];
-  const seenMetric = new Set();
-  const seenControl = new Set();
-
-  for (const d of devices) {
-    const caps = d.capabilities || {};
-    for (const m of caps.telemetry || []) {
-      if (!seenMetric.has(m.metric)) { seenMetric.add(m.metric); metrics.push(m); }
+  // Decide which view's content to show. The shell (sidebar/topbar) is the same
+  // for all of them.
+  function renderView() {
+    if (deviceList.length === 0) {
+      return (
+        <div className="empty">
+          Waiting for devices to report in. If this stays empty, check that the
+          simulator container is running.
+        </div>
+      );
     }
-    for (const c of caps.controls || []) {
-      if (!seenControl.has(c.key)) { seenControl.add(c.key); controls.push(c); }
+
+    switch (activeView) {
+      case 'devices':
+        return (
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <h3>Device Registry</h3>
+                <p className="panel-sub">Click a row to inspect</p>
+              </div>
+            </div>
+            <DeviceTable devices={deviceList} metrics={metrics} controls={controls} onOpen={setSelectedId} />
+          </section>
+        );
+
+      case 'alerts':
+        return (
+          <section className="panel">
+            <div className="panel-head"><h3>Active Alerts</h3></div>
+            <AlertsList alerts={alerts} />
+          </section>
+        );
+
+      case 'telemetry':
+      case 'reports':
+      case 'settings':
+        return <Placeholder name={VIEW_TITLES[activeView]} />;
+
+      case 'dashboard':
+      default:
+        return (
+          <DashboardView
+            devices={deviceList}
+            metrics={metrics}
+            controls={controls}
+            alerts={alerts}
+            kpis={kpis}
+            types={types}
+            history={history}
+            onOpen={setSelectedId}
+            onViewAll={() => setActiveView('alerts')}
+          />
+        );
     }
   }
-  return { metrics, controls };
 }
 
-// Pull the sortable value for a device given a column key. Understands the
-// fixed columns plus the "m:<metric>" (telemetry) and "c:<key>" (control)
-// encodings. Missing values sort as empty string; booleans as 0/1.
-function valueForSort(device, key) {
-  if (key.startsWith('m:')) {
-    const v = device.latest?.[key.slice(2)];
-    return v ?? '';
-  }
-  if (key.startsWith('c:')) {
-    const v = device.state?.[key.slice(2)];
-    return v === undefined ? '' : (v ? 1 : 0);
-  }
-  return device[key] ?? '';
-}
-
-function SortTh({ label, col, sortKey, sortDir, onSort }) {
-  const active = sortKey === col;
+// Honest stand-in for views we haven't built in this template.
+function Placeholder({ name }) {
   return (
-    <th className={`sortable ${active ? 'sorted' : ''}`} onClick={() => onSort(col)}>
-      {label}
-      <span className="sort-indicator">
-        {active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ' ↕'}
-      </span>
-    </th>
-  );
-}
-
-// Small labelled number used in the header.
-function Stat({ label, value, accent }) {
-  return (
-    <div className="stat">
-      <span className={`stat-value ${accent ? 'accent' : ''}`}>{value}</span>
-      <span className="stat-label">{label}</span>
+    <div className="placeholder panel">
+      <h3>{name}</h3>
+      <p className="muted">
+        This view isn't built in the template yet. It's a natural next step —
+        for example, {name} could live here. The shell, data layer, and live
+        feed are already in place to support it.
+      </p>
     </div>
   );
 }
